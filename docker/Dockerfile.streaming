@@ -1,0 +1,7 @@
+FROM lmsysorg/sglang:latest
+
+WORKDIR /opt/sglang
+COPY python /opt/sglang/python
+
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir -e python

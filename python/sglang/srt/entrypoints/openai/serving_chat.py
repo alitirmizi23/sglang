@@ -478,6 +478,29 @@ class OpenAIServingChat(OpenAIServingBase):
         cached_tokens = {}
         hidden_states = {}
 
+        empty_content_sent: Dict[int, bool] = {}
+
+        def format_stream_chunk(
+            chunk: ChatCompletionStreamResponse,
+        ) -> Optional[str]:
+            """Serialize a streaming chunk while suppressing repeated empty content."""
+
+            filtered_choices: List[ChatCompletionResponseStreamChoice] = []
+            for choice in chunk.choices:
+                delta_content = choice.delta.content
+                if delta_content == "":
+                    if empty_content_sent.get(choice.index, False):
+                        continue
+                    empty_content_sent[choice.index] = True
+                filtered_choices.append(choice)
+
+            if not filtered_choices and chunk.usage is None:
+                return None
+
+            chunk.choices = filtered_choices
+
+            return f"data: {chunk.model_dump_json()}\n\n"
+
         try:
             async for content in self.tokenizer_manager.generate_request(
                 adapted_request, raw_request
@@ -522,7 +545,9 @@ class OpenAIServingChat(OpenAIServingBase):
                         choices=[choice_data],
                         model=request.model,
                     )
-                    yield f"data: {chunk.model_dump_json()}\n\n"
+                    formatted_chunk = format_stream_chunk(chunk)
+                    if formatted_chunk:
+                        yield formatted_chunk
 
                 stream_buffer = stream_buffers.get(index, "")
                 delta = content["text"][len(stream_buffer) :]
@@ -548,7 +573,9 @@ class OpenAIServingChat(OpenAIServingBase):
                             choices=[choice_data],
                             model=request.model,
                         )
-                        yield f"data: {chunk.model_dump_json()}\n\n"
+                        formatted_chunk = format_stream_chunk(chunk)
+                        if formatted_chunk:
+                            yield formatted_chunk
 
                 # Handle tool calls
                 if (
@@ -564,8 +591,9 @@ class OpenAIServingChat(OpenAIServingBase):
                         request,
                         has_tool_calls,
                     ):
-                        if chunk:
-                            yield chunk
+                        formatted_chunk = format_stream_chunk(chunk)
+                        if formatted_chunk:
+                            yield formatted_chunk
 
                     # Send any remaining tool call arguments when generation finishes
                     if finish_reason_type is not None and index in parser_dict:
@@ -574,7 +602,9 @@ class OpenAIServingChat(OpenAIServingBase):
                             parser, content, request, index
                         )
                         if remaining_chunk:
-                            yield remaining_chunk
+                            formatted_chunk = format_stream_chunk(remaining_chunk)
+                            if formatted_chunk:
+                                yield formatted_chunk
 
                 else:
                     # Regular content
@@ -592,7 +622,9 @@ class OpenAIServingChat(OpenAIServingBase):
                             choices=[choice_data],
                             model=request.model,
                         )
-                        yield f"data: {chunk.model_dump_json()}\n\n"
+                        formatted_chunk = format_stream_chunk(chunk)
+                        if formatted_chunk:
+                            yield formatted_chunk
 
             # Send finish_reason chunks for each index that completed
             for idx, finish_reason_data in finish_reasons.items():
@@ -623,7 +655,9 @@ class OpenAIServingChat(OpenAIServingBase):
                     model=request.model,
                     usage=None,
                 )
-                yield f"data: {finish_reason_chunk.model_dump_json()}\n\n"
+                formatted_chunk = format_stream_chunk(finish_reason_chunk)
+                if formatted_chunk:
+                    yield formatted_chunk
 
             # Send hidden states if requested
             if request.return_hidden_states and hidden_states:
@@ -648,7 +682,9 @@ class OpenAIServingChat(OpenAIServingBase):
                             ],
                             model=request.model,
                         )
-                        yield f"data: {hidden_states_chunk.model_dump_json()}\n\n"
+                        formatted_chunk = format_stream_chunk(hidden_states_chunk)
+                        if formatted_chunk:
+                            yield formatted_chunk
 
             # Additional usage chunk
             if request.stream_options and request.stream_options.include_usage:
@@ -666,7 +702,9 @@ class OpenAIServingChat(OpenAIServingBase):
                     model=request.model,
                     usage=usage,
                 )
-                yield f"data: {usage_chunk.model_dump_json()}\n\n"
+                formatted_chunk = format_stream_chunk(usage_chunk)
+                if formatted_chunk:
+                    yield formatted_chunk
 
         except ValueError as e:
             error = self.create_streaming_error_response(str(e))
@@ -987,7 +1025,7 @@ class OpenAIServingChat(OpenAIServingBase):
         content: Dict[str, Any],
         request: ChatCompletionRequest,
         has_tool_calls: Dict[int, bool],
-    ):
+    ) -> AsyncGenerator[ChatCompletionStreamResponse, None]:
         """Process tool calls in streaming response"""
         if index not in parser_dict:
             parser_dict[index] = FunctionCallParser(
@@ -1011,7 +1049,7 @@ class OpenAIServingChat(OpenAIServingBase):
                 choices=[choice_data],
                 model=request.model,
             )
-            yield f"data: {chunk.model_dump_json()}\n\n"
+            yield chunk
 
         # Yield tool calls
         history_tool_calls_cnt = self._get_history_tool_calls_cnt(request)
@@ -1051,7 +1089,7 @@ class OpenAIServingChat(OpenAIServingBase):
                 choices=[choice_data],
                 model=request.model,
             )
-            yield f"data: {chunk.model_dump_json()}\n\n"
+            yield chunk
 
     def _check_for_unstreamed_tool_args(
         self,
@@ -1059,7 +1097,7 @@ class OpenAIServingChat(OpenAIServingBase):
         content: Dict[str, Any],
         request: ChatCompletionRequest,
         index: int,
-    ) -> Optional[str]:
+    ) -> Optional[ChatCompletionStreamResponse]:
         """
         Check for any remaining tool call arguments that need to be streamed
         when generation finishes. This ensures tool calls are properly completed
@@ -1121,6 +1159,6 @@ class OpenAIServingChat(OpenAIServingBase):
                 model=request.model,
             )
 
-            return f"data: {chunk.model_dump_json()}\n\n"
+            return chunk
 
         return None

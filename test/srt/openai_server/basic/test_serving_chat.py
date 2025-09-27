@@ -7,7 +7,6 @@ or
 """
 
 import asyncio
-import json
 import unittest
 import uuid
 from typing import Optional
@@ -404,19 +403,17 @@ class ServingChatTestCase(unittest.TestCase):
                     request=req,
                     has_tool_calls={},
                 )
-                # Get first yielded SSE line
-                line = None
+                first_chunk = None
                 async for emitted in gen:
-                    line = emitted
+                    first_chunk = emitted
                     break
-                return line
+                return first_chunk
 
             loop = asyncio.get_event_loop()
-            line = loop.run_until_complete(collect_first_tool_chunk())
-            self.assertIsNotNone(line)
-            self.assertTrue(line.startswith("data: "))
+            chunk = loop.run_until_complete(collect_first_tool_chunk())
+            self.assertIsNotNone(chunk)
 
-            payload = json.loads(line[len("data: ") :])
+            payload = chunk.model_dump()
             tool_calls = payload["choices"][0]["delta"]["tool_calls"]
             self.assertEqual(tool_calls[0]["id"], "functions.get_weather:0")
 
@@ -579,19 +576,17 @@ class ServingChatTestCase(unittest.TestCase):
                     request=req,
                     has_tool_calls={},
                 )
-                # Get first yielded SSE line
-                line = None
+                first_chunk = None
                 async for emitted in gen:
-                    line = emitted
+                    first_chunk = emitted
                     break
-                return line
+                return first_chunk
 
             loop = asyncio.get_event_loop()
-            line = loop.run_until_complete(collect_first_tool_chunk())
-            self.assertIsNotNone(line)
-            self.assertTrue(line.startswith("data: "))
+            chunk = loop.run_until_complete(collect_first_tool_chunk())
+            self.assertIsNotNone(chunk)
 
-            payload = json.loads(line[len("data: ") :])
+            payload = chunk.model_dump()
             tool_calls = payload["choices"][0]["delta"]["tool_calls"]
             self.assertEqual(tool_calls[0]["id"], "functions.get_weather:1")
 
